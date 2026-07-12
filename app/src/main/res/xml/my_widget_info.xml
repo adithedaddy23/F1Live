@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@drawable/calendar_today_24dp_e3e3e3_fill0_wght400_grad0_opsz24"
+    android:minWidth="120dp"
+    android:minHeight="120dp"
+    android:previewImage="@drawable/clock"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1200000"
+    android:widgetCategory="home_screen" />

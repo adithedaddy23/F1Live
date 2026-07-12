@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">F1 Live</string>
+    <string name="widget_description">Shows the next F1 Grand Prix or current race weekend</string>
+</resources>
