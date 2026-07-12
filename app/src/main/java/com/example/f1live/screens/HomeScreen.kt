@@ -4,6 +4,9 @@ import android.content.Intent
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -38,6 +41,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 //import androidx.compose.material.icons.Icons
@@ -50,10 +54,12 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LoadingIndicatorDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -95,10 +101,14 @@ import com.example.f1live.api.RaceX
 import com.example.f1live.api.Result
 import com.example.f1live.api.ResultX
 import com.example.f1live.api.UiState
+import com.example.f1live.repository.ApkDownloader
 import com.example.f1live.repository.DriversImg
 import com.example.f1live.repository.Routes
 import com.example.f1live.repository.TrackPhotos
 import com.example.f1live.viewmodel.F1ViewModel
+import com.example.f1live.viewmodel.UpdateState
+import com.example.f1live.viewmodel.UpdateViewModel
+import com.example.f1live.BuildConfig
 import com.kyant.capsule.ContinuousCapsule
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
@@ -153,6 +163,41 @@ fun Homescreen(
     val categorizedRaces = remember(raceState) {
         (raceState as? UiState.Success)?.let { categorizeRaces(it.data.MRData.RaceTable.Races) }
     }
+
+    val context = LocalContext.current
+    val updateViewModel: UpdateViewModel = viewModel()
+    val updateState by updateViewModel.state.collectAsState()
+
+// Launcher for the "unknown sources" settings screen
+    val settingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        // Runs when user comes back from Settings, regardless of what they picked
+        updateViewModel.recheckPermission(context)
+    }
+
+    LaunchedEffect(Unit) {
+        updateViewModel.checkForUpdate(BuildConfig.VERSION_NAME)
+    }
+
+    UpdateDialog(
+        state = updateState,
+        onDownloadClick = {
+            val release = (updateState as? UpdateState.Available)?.release ?: return@UpdateDialog
+            updateViewModel.startDownload(context, release)
+        },
+        onInstallClick = { uri ->
+            ApkDownloader(context).installApk(uri)
+            updateViewModel.dismiss()
+        },
+        onOpenSettingsClick = { _ ->
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:${context.packageName}")
+            }
+            settingsLauncher.launch(intent)
+        },
+        onDismiss = { updateViewModel.dismiss() }
+    )
 
     LaunchedEffect(year) {
         viewModel.fetchAllDataForYear(year.toString())
@@ -915,4 +960,63 @@ fun PodiumDriverItem(
 //    )
 //    PodiumCard(topThree = topThreeDrivers)
 //}
+
+@Composable
+fun UpdateDialog(
+    state: UpdateState,
+    onDownloadClick: () -> Unit,
+    onInstallClick: (Uri) -> Unit,
+    onOpenSettingsClick: (Uri) -> Unit,
+    onDismiss: () -> Unit
+) {
+    when (state) {
+        is UpdateState.Available -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Update available: ${state.release.tag_name}") },
+            text = { Text(state.release.body ?: "A new version of F1Live is ready.") },
+            confirmButton = { TextButton(onClick = onDownloadClick) { Text("Download") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Later") } }
+        )
+        is UpdateState.Downloading -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Downloading update…") },
+            text = {
+                Column {
+                    LinearProgressIndicator(
+                        progress = { state.progress / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("${state.progress}%")
+                }
+            },
+            confirmButton = {}
+        )
+        is UpdateState.NeedsInstallPermission -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Allow installs from F1Live") },
+            text = {
+                Text("To install this update, allow F1Live to install apps. You'll be taken to a settings screen — just turn on the toggle and come back.")
+            },
+            confirmButton = {
+                TextButton(onClick = { onOpenSettingsClick(state.apkUri) }) { Text("Open Settings") }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        )
+        is UpdateState.ReadyToInstall -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Ready to install") },
+            text = { Text("The update has finished downloading.") },
+            confirmButton = { TextButton(onClick = { onInstallClick(state.apkUri) }) { Text("Install") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Later") } }
+        )
+        is UpdateState.Error -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Update failed") },
+            text = { Text(state.message) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+        )
+        UpdateState.Idle -> {}
+    }
+}
 
