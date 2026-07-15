@@ -39,8 +39,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -109,6 +111,7 @@ import com.example.f1live.viewmodel.F1ViewModel
 import com.example.f1live.viewmodel.UpdateState
 import com.example.f1live.viewmodel.UpdateViewModel
 import com.example.f1live.BuildConfig
+import com.example.f1live.viewmodel.WhatsNewState
 import com.kyant.capsule.ContinuousCapsule
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
@@ -164,40 +167,8 @@ fun Homescreen(
         (raceState as? UiState.Success)?.let { categorizeRaces(it.data.MRData.RaceTable.Races) }
     }
 
-    val context = LocalContext.current
-    val updateViewModel: UpdateViewModel = viewModel()
-    val updateState by updateViewModel.state.collectAsState()
 
-// Launcher for the "unknown sources" settings screen
-    val settingsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        // Runs when user comes back from Settings, regardless of what they picked
-        updateViewModel.recheckPermission(context)
-    }
-
-    LaunchedEffect(Unit) {
-        updateViewModel.checkForUpdate(BuildConfig.VERSION_NAME)
-    }
-
-    UpdateDialog(
-        state = updateState,
-        onDownloadClick = {
-            val release = (updateState as? UpdateState.Available)?.release ?: return@UpdateDialog
-            updateViewModel.startDownload(context, release)
-        },
-        onInstallClick = { uri ->
-            ApkDownloader(context).installApk(uri)
-            updateViewModel.dismiss()
-        },
-        onOpenSettingsClick = { _ ->
-            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                data = Uri.parse("package:${context.packageName}")
-            }
-            settingsLauncher.launch(intent)
-        },
-        onDismiss = { updateViewModel.dismiss() }
-    )
+//
 
     LaunchedEffect(year) {
         viewModel.fetchAllDataForYear(year.toString())
@@ -1017,6 +988,23 @@ fun UpdateDialog(
             confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
         )
         UpdateState.Idle -> {}
+    }
+}
+
+@Composable
+fun WhatsNewDialog(state: WhatsNewState, onDismiss: () -> Unit) {
+    if (state is WhatsNewState.Show) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("What's new in ${state.release.tag_name}") },
+            text = {
+                Text(
+                    state.release.body ?: "Bug fixes and improvements.",
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                )
+            },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Got it") } }
+        )
     }
 }
 

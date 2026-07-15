@@ -634,9 +634,9 @@ fun ConstructorStandingCard(standing: ConstructorStanding) {
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .fillMaxWidth(0.62f)
+                    .fillMaxWidth(0.70f)
                     .fillMaxHeight(0.60f)
-                    .offset(x = 16.dp)
+                    .offset(x = 60.dp)
                     .graphicsLayer(scaleX = -1f)
                     .zIndex(2f)
             )

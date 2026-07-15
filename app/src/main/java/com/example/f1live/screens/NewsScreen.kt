@@ -227,7 +227,7 @@ fun NewsCardModern(
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(imageUrl)
-                            .crossfade(800)
+                            .crossfade(300)
                             .build(),
                         contentDescription = null,
                         modifier = Modifier

@@ -1,13 +1,18 @@
 package com.example.f1live
 
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -105,6 +110,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -185,9 +191,15 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.f1live.api.Lap
+import com.example.f1live.repository.ApkDownloader
 import com.example.f1live.screens.NewsScreen
 import com.example.f1live.screens.RaceScrubberScreen
+import com.example.f1live.screens.UpdateDialog
+import com.example.f1live.screens.WhatsNewDialog
 import com.example.f1live.utils.LiquidBottomTabs
+import com.example.f1live.viewmodel.UpdateState
+import com.example.f1live.viewmodel.UpdateViewModel
+import com.example.f1live.viewmodel.WhatsNewViewModel
 import com.example.f1live.widget.F1WidgetUpdateWorker
 import com.google.protobuf.LazyStringArrayList.emptyList
 import com.kyant.backdrop.Backdrop
@@ -255,6 +267,49 @@ fun MainScreen() {
 
     val showBottomBar = routesWithoutBottomBar.none { it == currentRoute }
     val backdrop = rememberLayerBackdrop()
+
+    val context = LocalContext.current
+    val updateViewModel: UpdateViewModel = viewModel()
+    val updateState by updateViewModel.state.collectAsState()
+
+    val whatsNewViewModel: WhatsNewViewModel = viewModel()
+    val whatsNewState by whatsNewViewModel.state.collectAsState()
+
+    LaunchedEffect(Unit) {
+        whatsNewViewModel.checkWhatsNew(BuildConfig.VERSION_NAME)
+    }
+
+    WhatsNewDialog(state = whatsNewState, onDismiss = { whatsNewViewModel.dismiss() })
+
+    val settingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        updateViewModel.recheckPermission(context)
+    }
+
+    LaunchedEffect(Unit) {
+        updateViewModel.checkForUpdate(BuildConfig.VERSION_NAME)
+    }
+
+    UpdateDialog(
+        state = updateState,
+        onDownloadClick = {
+            val release = (updateState as? UpdateState.Available)?.release ?: return@UpdateDialog
+            updateViewModel.startDownload(context, release)
+        },
+        onInstallClick = { uri ->
+            ApkDownloader(context).installApk(uri)
+            updateViewModel.dismiss()
+        },
+        onOpenSettingsClick = { _ ->
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:${context.packageName}")
+            }
+            settingsLauncher.launch(intent)
+        },
+        onDismiss = { updateViewModel.dismiss() }
+    )
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -597,8 +652,9 @@ private fun CustomGlassmorphicBottomNav(
                                     20f.dp.toPx(),
                                     38f.dp.toPx(),
                                     chromaticAberration = false,
-                                    depthEffect = false
+                                    depthEffect = false,
                                 )
+
                             },
                             onDrawBackdrop = { drawBackdrop ->
                                 drawBackdrop()
