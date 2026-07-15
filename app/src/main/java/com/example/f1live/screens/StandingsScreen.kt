@@ -5,11 +5,17 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,18 +65,30 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.LinearGradientShader
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
@@ -88,6 +106,7 @@ import com.example.f1live.api.UiState
 import com.example.f1live.repository.Car
 import com.example.f1live.repository.Routes
 import com.example.f1live.repository.logo
+import com.example.f1live.utils.ripple
 import com.example.f1live.viewmodel.F1ViewModel
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -104,7 +123,8 @@ fun StandingsScreen(
     val tabs = listOf("Drivers", "Constructors")
     val pagerState = rememberPagerState(pageCount = { tabs.size })
     val coroutineScope = rememberCoroutineScope()
-
+    val year = LocalDate.now().year
+    val driverState by viewModel.driversState.collectAsState()
     val driverStandingsState by viewModel.driverStandingsState.collectAsState()
     val constructorStandingsState by viewModel.constructorStandingsState.collectAsState()
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -112,6 +132,7 @@ fun StandingsScreen(
     LaunchedEffect(Unit) {
         viewModel.fetchDriverStandings()
         viewModel.fetchConstructorStandings()
+        viewModel.fetchDrivers(year.toString())
     }
 
     Column(
@@ -219,6 +240,7 @@ fun DriverStandingsContent(
             }
         }
         is UiState.Success -> {
+
             val standings = state.data.MRData.StandingsTable.StandingsLists.firstOrNull()
                 ?.DriverStandings ?: emptyList()
 
@@ -277,8 +299,7 @@ fun DriverStandingCard(
     navController: NavController,
     sharedTransitionScope: SharedTransitionScope,
     animatedContentScope: AnimatedContentScope,
-    ) {
-    // Get all the data needed for the card
+) {
     val constructor = standing.Constructors.firstOrNull()
     val constructorId = constructor?.constructorId ?: ""
     val constructorName = constructor?.name ?: ""
@@ -289,119 +310,112 @@ fun DriverStandingCard(
     val driverImage = getDriverImage(standing.Driver.driverId)
     val teamLogo = getTeamLogo(constructorName)
 
+    val position = standing.positionText ?: standing.position ?: "-"
+    val ordinalSuffix = remember(position) { ordinalSuffixFor(position) }
+
+
+    // Paint reused across recompositions/draws; dithering is what actually kills the
+    // gradient banding — Modifier.background(brush) does not enable it, but a raw
+    // Paint drawn via drawIntoCanvas does.
+    val gradientPaint = remember {
+        Paint().apply { asFrameworkPaint().isDither = true }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 100.dp)
+            .height(140.dp)
             .clickable{
-                navController.navigate(Routes.Driver.createRoute2(year.toString(),driverId))
-            }, // <-- ⭐ YOUR FIX IS HERE
+                navController.navigate(Routes.Driver.createRoute2(year.toString(), driverId))
+            },
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize() // This will now correctly fill the 100dp or larger height
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color(0xFF1E1E1E),
-                            Color(0xFF2A2A2A).copy(alpha = 0.8f)
-                        )
+                .fillMaxSize()
+                .drawWithCache {
+                    // Primary team color on the left fading into dark on the right,
+                    // with a soft midpoint stop so the hue shift itself is gentler —
+                    // fewer big jumps in value/saturation means less visible banding
+                    // even before dithering is factored in.
+                    val dark = Color(0xFF141414)
+                    val mid = lerp(teamColorInfo.primaryColor, dark, 0.5f)
+                    gradientPaint.shader = LinearGradientShader(
+                        from = Offset(0f, 0f),
+                        to = Offset(size.width, 0f),
+                        colors = listOf(teamColorInfo.primaryColor, mid, dark),
+                        colorStops = listOf(0f, 0.6f, 1f)
                     )
-                ),
-            contentAlignment = Alignment.Center
+                    onDrawBehind {
+                        drawIntoCanvas { canvas ->
+                            canvas.drawRect(0f, 0f, size.width, size.height, gradientPaint)
+                        }
+                    }
+                }
         ) {
-            Row(
+            // Big faint position number watermark, bottom-right
+            Text(
+                text = position,
+                fontSize = 90.sp,
+                fontWeight = FontWeight.Black,
+                color = Color.White.copy(alpha = 0.08f),
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .align(Alignment.CenterEnd)
+                    .offset(x = 10.dp, y = 0.dp)
+            )
+
+            // Driver image, right-aligned, bleeding off the bottom edge
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(driverImage)
+                    .crossfade(300)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .build(),
+                contentDescription = "${standing.Driver.givenName} ${standing.Driver.familyName}",
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .width(110.dp)
+                    .fillMaxHeight()
+                    .padding(top = 12.dp)
+            )
+
+            // Left-to-right fade so text stays readable over the photo edge
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.35f),
+                                Color.Transparent
+                            ),
+                            startX = 0f,
+                            endX = 500f
+                        )
+                    )
+            )
+
+            // Foreground content
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 16.dp, end = 130.dp)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.Center
             ) {
-                // 1. Position
-                Box(
-                    modifier = Modifier.width(50.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = standing.positionText ?: standing.position ?: "-",
-
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // 2. Driver Image
-                Box(
-                    modifier = Modifier
-                        .size(45.dp)
-                        .clip(CircleShape)
-                        .background(teamColorInfo.darkVariant),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(driverImage)
-                            .crossfade(300)
-                            .memoryCachePolicy(CachePolicy.ENABLED)
-                            .diskCachePolicy(CachePolicy.ENABLED)
-                            .build(),
-                        contentDescription = "${standing.Driver.givenName} ${standing.Driver.familyName}",
+                // Team badge row: logo chip + driver name
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
                         modifier = Modifier
-                            .height(90.dp)
-                            .fillMaxWidth(),
-                        contentScale = ContentScale.Crop,
-                        alignment = Alignment.TopCenter
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // 3. Driver and Team Info
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    // Driver Name
-                    with(sharedTransitionScope) {
-                        Text(
-                            text = standing.Driver.givenName ?: "Unknown",
-                            fontSize = 13.sp,
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.sharedElement(
-                                sharedTransitionScope.rememberSharedContentState(key = "race-name-${standing.Driver.givenName}"),
-                                animatedVisibilityScope = animatedContentScope
-                            )
-                        )
-                    }
-                    with(sharedTransitionScope) {
-                        Text(
-                            text = (standing.Driver.familyName ?: "").uppercase(),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            letterSpacing = 0.5.sp,
-                            overflow = TextOverflow.Ellipsis,
-                            maxLines = 1,
-                            modifier = Modifier.sharedElement(
-                                sharedTransitionScope.rememberSharedContentState(key = "race-name-${standing.Driver.familyName}"),
-                                animatedVisibilityScope = animatedContentScope
-                            )
-                        )
-                    }
-
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Team Logo and Name
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
                     ) {
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
@@ -411,62 +425,87 @@ fun DriverStandingCard(
                                 .diskCachePolicy(CachePolicy.ENABLED)
                                 .build(),
                             contentDescription = "$constructorName Logo",
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier
-                                .height(16.dp)
-                                .padding(end = 6.dp),
-                            contentScale = ContentScale.Fit
-                        )
-                        Text(
-                            text = constructorName ?: "Unknown",
-                            fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                                .size(16.dp)
+
                         )
                     }
-                }
 
-                Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
-                // 4. Points
-                Box(
-                    modifier = Modifier.width(65.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
+                    with(sharedTransitionScope) {
                         Text(
-                            text = standing.points ?: "NA",
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "PTS",
-                            fontSize = 10.sp,
-                            color = Color.White.copy(alpha = 0.5f),
+                            text = "${standing.Driver.givenName ?: ""} ${(standing.Driver.familyName ?: "").let { if (it.isNotBlank()) it.uppercase() else "" }}".trim(),
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.sharedElement(
+                                sharedTransitionScope.rememberSharedContentState(key = "race-name-${standing.Driver.familyName}"),
+                                animatedVisibilityScope = animatedContentScope
+                            )
                         )
                     }
                 }
 
-                Box(
-                    modifier = Modifier.width(25.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.chevron_forward_24dp_000000_fill0_wght400_grad0_opsz24),
-                        contentDescription = "More",
-                        modifier = Modifier.size(48.dp)
-                    )
+                Spacer(modifier = Modifier.height(10.dp))
 
-                }
+                // "Nth place"
+                Text(
+                    text = "$position$ordinalSuffix place",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.75f)
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // Points
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(fontSize = 26.sp, fontWeight = FontWeight.Black, color = Color.White)) {
+                            append(standing.points ?: "0")
+                        }
+                        withStyle(SpanStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.85f))) {
+                            append("pts")
+                        }
+                    }
+                )
+            }
+
+            // Tap affordance: a small chevron chip in a translucent circle, top-right.
+            // Signals "this leads somewhere" without competing with the points/position text.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.30f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.chevron_forward_24dp_000000_fill0_wght400_grad0_opsz24),
+                    contentDescription = "View driver details",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
+    }
+}
+
+/** Returns "st", "nd", "rd", or "th" for a numeric position string like "5". */
+private fun ordinalSuffixFor(position: String): String {
+    val n = position.toIntOrNull() ?: return ""
+    return when {
+        n % 100 in 11..13 -> "th"
+        n % 10 == 1 -> "st"
+        n % 10 == 2 -> "nd"
+        n % 10 == 3 -> "rd"
+        else -> "th"
     }
 }
 @Composable
@@ -522,137 +561,206 @@ fun ConstructorStandingsContent(state: UiState<ConstructorStandings>) {
 fun ConstructorStandingCard(standing: ConstructorStanding) {
     val teamColorInfo = getTeamColorInfo(standing.Constructor.constructorId)
     val carImage = getCarImage(standing.Constructor.name)
+    val teamLogo = getTeamLogo(standing.Constructor.name ?: "")
+
+    val position = standing.positionText ?: standing.position ?: "-"
+    val ordinalSuffix = remember(position) { ordinalSuffixFor(position) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(220.dp),
+            .height(200.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(teamColorInfo.backgroundBrush)
+                .background(Color(0xFF0A0A0D))
         ) {
-            // Subtle pattern overlay
+            // Diagonal team-color wash bleeding in from the right, behind the car.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
-                        Brush.radialGradient(
+                        Brush.linearGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.05f),
-                                Color.Transparent
+                                Color.Transparent,
+                                Color.Transparent,
+                                teamColorInfo.primaryColor.copy(alpha = 0.35f),
+                                teamColorInfo.primaryColor.copy(alpha = 0.55f)
                             ),
-                            center = Offset(500f, 0f),
-                            radius = 800f
+                            start = Offset(0f, 0f),
+                            end = Offset(1100f, 300f)
                         )
                     )
+                    .zIndex(0f)
             )
 
-            Row(
+            // Racing stripe accents — a handful of angled bars, clipped to the card.
+            Canvas(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .zIndex(1f)
             ) {
-                // Left side - Position and Info
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    horizontalAlignment = Alignment.Start
-                ) {
-                    // Position circle
+                val stripeColor = Color.White.copy(alpha = 0.05f)
+                val stripeWidth = 26.dp.toPx()
+                val gap = 22.dp.toPx()
+                var x = size.width * 0.45f
+//                repeat(6) {
+//                    rotate(degrees = 20f, pivot = Offset(x, size.height / 2f)) {
+//                        drawRect(
+//                            color = stripeColor,
+//                            topLeft = Offset(x, -40f),
+//                            size = androidx.compose.ui.geometry.Size(stripeWidth, size.height + 80f)
+//                        )
+//                    }
+//                    x += stripeWidth + gap
+//                }
+            }
+
+            // Car image — now a full-bleed BACKGROUND layer (zIndex 2), independent of the
+            // text column's width. This is what was squeezing the constructor name before:
+            // it used to share a weighted Row cell with the text, capping available width.
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(carImage)
+                    .crossfade(300)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .build(),
+                contentDescription = "${standing.Constructor.name} car",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxWidth(0.62f)
+                    .fillMaxHeight(0.60f)
+                    .offset(x = 16.dp)
+                    .graphicsLayer(scaleX = -1f)
+                    .zIndex(2f)
+            )
+
+            // Scrim so the car's left edge never fights the text for legibility, regardless
+            // of how wide/dark a given team's car render is.
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.55f),
+                                Color.Black.copy(alpha = 0.15f),
+                                Color.Transparent
+                            ),
+                            startX = 0f,
+                            endX = 650f
+                        )
+                    )
+                    .zIndex(3f)
+            )
+
+            // Foreground content — highest zIndex, always drawn on top of the car.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(20.dp)
+                    .fillMaxWidth(0.72f)
+                    .zIndex(4f),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Logo + "Team" / name badge
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(56.dp)
-                            .background(
-                                Color.White.copy(alpha = 0.15f),
-                                CircleShape
-                            )
-                            .border(
-                                2.dp,
-                                Color.White.copy(alpha = 0.4f),
-                                CircleShape
-                            ),
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.08f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = standing.positionText ?: standing.position ?: "-",
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(teamLogo)
+                                .crossfade(300)
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .build(),
+                            contentDescription = "${standing.Constructor.name} logo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(22.dp)
+
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
-                    // Team name
-                    Text(
-                        text = (standing.Constructor.name ?: "Unknown Team").uppercase(),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        letterSpacing = 1.2.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 18.sp
+                    Box(
+                        modifier = Modifier
+                            .width(1.5.dp)
+                            .height(28.dp)
+                            .background(teamColorInfo.primaryColor.copy(alpha = 0.8f))
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
-                    // Points with better visibility
-                    Row(
-                        verticalAlignment = Alignment.Bottom,
-                        modifier = Modifier
-                            .background(
-                                Color.Black.copy(alpha = 0.25f),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
                         Text(
-                            text = standing.points ?: "0",
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "PTS",
+                            text = "Team",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.padding(bottom = 3.dp)
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+                        // Full name, no truncation: up to 2 lines, tight line height, no ellipsis.
+                        // Now that this column isn't fighting the car for width, one line is
+                        // enough for almost every constructor name; two lines is just a safety net.
+                        Text(
+                            text = standing.Constructor.name ?: "Unknown",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            maxLines = 2,
+                            softWrap = true,
+                            lineHeight = 20.sp
                         )
                     }
                 }
 
-                // Right side - Car Image
-                Box(
-                    modifier = Modifier.weight(1.1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(carImage)
-                            .crossfade(300)
-                            .memoryCachePolicy(CachePolicy.ENABLED)
-                            .diskCachePolicy(CachePolicy.ENABLED)
-                            .build(),
-                        contentDescription = "${standing.Constructor.name} car",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(140.dp),
-                        contentScale = ContentScale.Fit
+                Column {
+                    // "1st place"
+                    Text(
+                        text = "$position$ordinalSuffix place",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    // Points
+                    Text(
+                        text = buildAnnotatedString {
+                            withStyle(SpanStyle(fontSize = 30.sp, fontWeight = FontWeight.Black, color = Color.White)) {
+                                append(standing.points ?: "0")
+                            }
+                            withStyle(SpanStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.85f))) {
+                                append("pts")
+                            }
+                        }
                     )
                 }
             }
         }
     }
 }
+
+// NOTE: ordinalSuffixFor(position: String) is defined in DriverStandingCard.kt.
+// Make sure it's not declared `private` there (private top-level functions are
+// file-private in Kotlin) — change it to internal/public, or move it to a shared Utils.kt.
+
+// NOTE: ordinalSuffixFor(position: String) is already defined in DriverStandingCard.kt
+// (returns "st"/"nd"/"rd"/"th"). Don't redeclare it here if both files share a package —
+// just make sure it isn't private to that file, or move it somewhere shared.
 
 data class TeamColorInfo(
     val primaryColor: Color,
