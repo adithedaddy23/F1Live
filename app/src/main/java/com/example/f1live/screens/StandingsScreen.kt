@@ -108,6 +108,11 @@ import com.example.f1live.repository.Routes
 import com.example.f1live.repository.logo
 import com.example.f1live.utils.ripple
 import com.example.f1live.viewmodel.F1ViewModel
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.materials.CupertinoMaterials
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -291,7 +296,7 @@ fun getTeamLogo(constructorName: String): String {
     return logo.teamLogos.find { it.name == nameToFind }?.logoUrl ?: ""
 }
 
-@OptIn(ExperimentalSharedTransitionApi::class)
+@OptIn(ExperimentalSharedTransitionApi::class, ExperimentalHazeMaterialsApi::class)
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun DriverStandingCard(
@@ -300,6 +305,9 @@ fun DriverStandingCard(
     sharedTransitionScope: SharedTransitionScope,
     animatedContentScope: AnimatedContentScope,
 ) {
+    // 1. Initialize Haze State
+    val hazeState = rememberHazeState()
+
     val constructor = standing.Constructors.firstOrNull()
     val constructorId = constructor?.constructorId ?: ""
     val constructorName = constructor?.name ?: ""
@@ -313,10 +321,6 @@ fun DriverStandingCard(
     val position = standing.positionText ?: standing.position ?: "-"
     val ordinalSuffix = remember(position) { ordinalSuffixFor(position) }
 
-
-    // Paint reused across recompositions/draws; dithering is what actually kills the
-    // gradient banding — Modifier.background(brush) does not enable it, but a raw
-    // Paint drawn via drawIntoCanvas does.
     val gradientPaint = remember {
         Paint().apply { asFrameworkPaint().isDither = true }
     }
@@ -335,11 +339,9 @@ fun DriverStandingCard(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // 2. Set this main container as the Haze Source so it captures the gradient and image
+                .hazeSource(state = hazeState)
                 .drawWithCache {
-                    // Primary team color on the left fading into dark on the right,
-                    // with a soft midpoint stop so the hue shift itself is gentler —
-                    // fewer big jumps in value/saturation means less visible banding
-                    // even before dithering is factored in.
                     val dark = Color(0xFF141414)
                     val mid = lerp(teamColorInfo.primaryColor, dark, 0.5f)
                     gradientPaint.shader = LinearGradientShader(
@@ -410,11 +412,20 @@ fun DriverStandingCard(
             ) {
                 // Team badge row: logo chip + driver name
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 3. Apply Haze Effect to the Team Logo Box
                     Box(
                         modifier = Modifier
                             .size(22.dp)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(Color.White.copy(alpha = 0.15f)),
+//                            .hazeEffect(
+//                                state = hazeState,
+//                                style = CupertinoMaterials.thick()
+//                            ) {
+//                                blurRadius = 16.dp
+//                            }
+//                            .background(Color.Black.copy(alpha = 0.20f)),
+                                ,
+
                         contentAlignment = Alignment.Center
                     ) {
                         AsyncImage(
@@ -426,9 +437,7 @@ fun DriverStandingCard(
                                 .build(),
                             contentDescription = "$constructorName Logo",
                             contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .size(16.dp)
-
+                            modifier = Modifier.size(16.dp)
                         )
                     }
 
@@ -475,15 +484,14 @@ fun DriverStandingCard(
                 )
             }
 
-            // Tap affordance: a small chevron chip in a translucent circle, top-right.
-            // Signals "this leads somewhere" without competing with the points/position text.
+            // 4. Apply Haze Effect to the Tap Affordance chevron
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(10.dp)
                     .size(26.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.30f)),
+                    .background(Color.Black.copy(alpha = 0.50f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

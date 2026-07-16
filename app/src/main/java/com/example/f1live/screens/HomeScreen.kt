@@ -60,6 +60,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LoadingIndicatorDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -117,6 +118,7 @@ import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.CupertinoMaterials
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -402,10 +404,11 @@ fun categorizeRaces(races: List<RaceX>): CategorizedRaces {
     )
 }
 
-private val darkOverlayBrush = Brush.verticalGradient(
-    colors = listOf(Color.Black.copy(alpha = 0.2f), Color.Black.copy(alpha = 0.6f))
+@OptIn(
+    ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalSharedTransitionApi::class,
+    ExperimentalHazeMaterialsApi::class // Added Haze OptIn
 )
-@OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalSharedTransitionApi::class)
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun RaceCard(
@@ -418,6 +421,8 @@ fun RaceCard(
     animatedContentScope: AnimatedContentScope,
     viewModel: F1ViewModel
 ) {
+    // 1. Initialize the Haze State
+    val hazeState = rememberHazeState()
 
     val results by remember(race.round) {
         viewModel.raceResultsMap
@@ -425,24 +430,13 @@ fun RaceCard(
             .distinctUntilChanged()
     }.collectAsState(initial = emptyList())
 
-
-    // Move expensive computations outside recomposition scope
-//    val trackImageResId = remember(race.raceName, race.Circuit.circuitName) {
-//        TrackPhotos.getTrackList().firstOrNull { track ->
-//            race.raceName.contains(track.gpName, ignoreCase = true) ||
-//                    race.Circuit.circuitName.contains(track.circuitName, ignoreCase = true)
-//        }?.imgUrl
-//    }
-//    val hazeState = rememberHazeState()
-
     val cardShape = MaterialTheme.shapes.medium
 
     val containerColor = remember(isCurrentWeekend) {
-        if (isCurrentWeekend) Color(0xFF2196F3) else Color.Transparent
+        if (isCurrentWeekend) Color(0xFF2196F3).copy(alpha = 0.1f) else Color.Transparent
     }
 
     val isTransitionActive = animatedContentScope.transition.isRunning
-
     val context = LocalContext.current
 
     val trackImageResId = remember(race.raceName, race.Circuit.circuitName) {
@@ -452,18 +446,18 @@ fun RaceCard(
         }?.imgUrl
     }
 
-    // Memoized — only rebuilt when trackImageResId actually changes
     val imageRequest = remember(trackImageResId) {
         ImageRequest.Builder(context)
             .data(trackImageResId ?: R.drawable._025_japanese_gp___race_start_2)
-            .crossfade(150) // shortened from 300 — cheaper on fast scroll
+            .crossfade(150)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .placeholder(ColorDrawable(android.graphics.Color.DKGRAY)) // avoids layout pop
+            .placeholder(ColorDrawable(android.graphics.Color.DKGRAY))
             .size(600, 300)
             .precision(Precision.INEXACT)
             .build()
     }
+
     val raceState by viewModel.racesState.collectAsState()
 
     val categorizedRaces = remember(raceState) {
@@ -471,10 +465,10 @@ fun RaceCard(
     }
 
     LaunchedEffect(categorizedRaces) {
-        categorizedRaces?.past?.take(10)?.forEach { race ->
+        categorizedRaces?.past?.take(10)?.forEach { pastRace ->
             val imgRes = TrackPhotos.getTrackList().firstOrNull { track ->
-                race.raceName.contains(track.gpName, ignoreCase = true) ||
-                        race.Circuit.circuitName.contains(track.circuitName, ignoreCase = true)
+                pastRace.raceName.contains(track.gpName, ignoreCase = true) ||
+                        pastRace.Circuit.circuitName.contains(track.circuitName, ignoreCase = true)
             }?.imgUrl
 
             val request = ImageRequest.Builder(context)
@@ -486,8 +480,6 @@ fun RaceCard(
         }
     }
 
-
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -497,283 +489,267 @@ fun RaceCard(
                 )
             },
         shape = cardShape,
-        colors = CardDefaults.cardColors(
-            containerColor = containerColor
-        ),
-//        elevation = CardDefaults.cardElevation(
-//            defaultElevation = if (isCurrentWeekend) 8.dp else 0.dp
-//        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (isPast) 240.dp else 200.dp)
+                .height(if (isPast) 240.dp else 210.dp)
         ) {
-            // Background Image (for non-current weekend cards)
+
             if (!isCurrentWeekend) {
-
-
-
                 AsyncImage(
                     model = imageRequest,
                     contentDescription = null,
                     modifier = Modifier
-                        .fillMaxSize(),           // removed hazeSource
+                        .fillMaxSize()
+                        .hazeSource(state = hazeState), // 2. Apply hazeSource to the image
                     contentScale = ContentScale.Crop,
-                    alpha = 0.9f,
-                    filterQuality = FilterQuality.Low ,
-                    placeholder = ColorPainter(Color.DarkGray)// Low is faster than None for downscaled images
+                    alpha = 1f,
+                    filterQuality = FilterQuality.Low,
+                    placeholder = ColorPainter(Color.DarkGray)
                 )
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.Top
-                ) {
 
-//                    Button(
-//                        onClick = {},
-//                        modifier = Modifier.padding(8.dp),
-//                        colors = ButtonDefaults.buttonColors(
-//                            containerColor = MaterialTheme.colorScheme.primary.copy(0.8f),
-//                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-//                        ),
-//                        shape = CircleShape,
-//                    ) {
-//                        Text(
-//                            text = "Round ${race.round}",
-//                            fontSize = 12.sp
-//                        )
-//                    }
-
-
-//                    IconButton(
-//                        onClick = {
-//                            navController.navigate(
-//                                Routes.F1GrandPrix.createRoute(race.season, race.round)
-//                            )
-//                        },
-//                        modifier = Modifier
-//                            .padding(8.dp)
-//                            .clip(CircleShape)
-////                            .background(color = Color.Black, shape = CircleShape)
-//                            .hazeEffect(
-//                                state = hazeState,
-//                                style = CupertinoMaterials.ultraThin()
-//                            ) {
-//                                blurRadius = 10.dp
-//                                tints = listOf(
-//                                    HazeTint(Color.White.copy(0.5f))
-//                                )
-//                            },
-////                        colors = IconButtonDefaults.iconButtonColors(
-////                            containerColor =Color(0xFF2196F3).copy(0.7f),
-////                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-////                        )
-//                    ) {
-//                        Icon(
-//                            painter = painterResource(R.drawable.arrow_outward_24dp_000000_fill0_wght400_grad0_opsz24),
-//                            contentDescription = "Read article",
-//                            modifier = Modifier.size(20.dp),
-//                            tint = Color.Black
-//                        )
-//                    }
-
-                }
-
-                // Dark overlay for better text readability
+                // Keep the gradient to ensure the main title text remains readable
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            darkOverlayBrush
-                        )
+                        .background(heavyScrimBrush)
                 )
             }
 
-            // Content Column
+            // Main Content Column
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.SpaceAround
+                    .padding(16.dp)
             ) {
-                // Top Section: Race Name, Location, and Round Number
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                // --- TOP SECTION ---
+
+                // 3. Round Badge with Haze Effect
+                Box(
+                    modifier = Modifier
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(percent = 50))
+                        .hazeEffect(
+                            state = hazeState,
+                            style = CupertinoMaterials.regular()
                         ) {
-                            with(sharedTransitionScope) {
-                                Text(
-                                    text = race.raceName,
-                                    style = MaterialTheme.typography.titleLargeEmphasized,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 24.sp,
-                                    color = Color.White,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = if (isTransitionActive) {
-//                                        Modifier.sharedElement(
-//                                            sharedTransitionScope.rememberSharedContentState(key = "race-name-${race.round}"),
-//                                            animatedVisibilityScope = animatedContentScope
-//                                        )
-                                        Modifier
-                                            .sharedBounds(
-                                            rememberSharedContentState(key = "race-name-${race.round}"),
-                                            animatedVisibilityScope = animatedContentScope,
-                                            enter = fadeIn(),
-                                            exit = fadeOut(),
-                                            resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
-                                        )
-//                                            .renderInSharedTransitionScopeOverlay()
-                                    } else Modifier
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-//                            Row(
-//                                modifier = Modifier.fillMaxWidth(),
-//                                horizontalArrangement = Arrangement.End,
-//                                verticalAlignment = Alignment.CenterVertically
-//                            ) {
-//                                Text(
-//                                    text = "More",
-//                                    fontSize = 12.sp,
-//                                )
-//                                Spacer(Modifier.width(2.dp))
-//                                Icon(
-//                                    painter = painterResource(R.drawable.arrow_outward_24dp_000000_fill0_wght400_grad0_opsz24),
-//                                    contentDescription = "More Info",
-//                                    modifier = Modifier.size(13.dp)
-//                                )
-//                            }
-
+                            blurRadius = 20.dp
                         }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        with(sharedTransitionScope) {
-                            Text(
-                                text = race.Circuit.circuitName,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.8f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.sharedBounds(
-                                    sharedTransitionScope.rememberSharedContentState(key = "circuit-name-${race.round}"),
-                                    animatedVisibilityScope = animatedContentScope,
-                                    enter = fadeIn(),
-                                    exit = fadeOut(),
-                                    resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
-                                )
-                            )
-                        }
-                        with(sharedTransitionScope) {
-                            Text(
-                                text = "${race.Circuit.Location.locality}, ${race.Circuit.Location.country}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.sharedBounds(
-                                    sharedTransitionScope.rememberSharedContentState(key = "location-${race.round}"),
-                                    animatedVisibilityScope = animatedContentScope,
-                                    enter = fadeIn(),
-                                    exit = fadeOut(),
-                                    resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
-                                )
-                            )
-                        }
-
-                            Text(
-                                text = "Round ${race.round}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f),
-                            )
-
-                    }
+                        // Add a translucent F1 red over the blur for branding
+//                        .background(Color(0xFFE10600).copy(alpha = 0.6f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "ROUND ${race.round}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
                 }
 
-                // Bottom Section: Date/Time OR Podium
-                Column {
-                    if (showDate || isCurrentWeekend) {
-                        val (formattedDate, formattedTime) = remember(race.date, race.time) {
-                            try {
-                                val raceDate = LocalDate.parse(race.date)
-                                val raceTime = race.time?.let { LocalTime.parse(it.take(5)) } ?: LocalTime.MIDNIGHT
-                                val utcDateTime = LocalDateTime.of(raceDate, raceTime)
-                                val zonedUtcDateTime = utcDateTime.atZone(ZoneId.of("UTC"))
-                                val localZoneId = ZoneId.systemDefault()
-                                val localZonedDateTime = zonedUtcDateTime.withZoneSameInstant(localZoneId)
-                                val localDateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
-                                val localTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-                                val dateStr = localZonedDateTime.format(localDateFormatter)
-                                val timeStr = localZonedDateTime.format(localTimeFormatter)
-                                Pair(dateStr, timeStr.takeIf { race.time != null })
-                            } catch (e: Exception) {
-                                val fallbackTime = race.time?.let { "${it.take(5)} UTC" }
-                                Pair(race.date, fallbackTime)
-                            }
-                        }
+                // 2. Race Title
+                with(sharedTransitionScope) {
+                    Text(
+                        text = race.raceName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 24.sp,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = if (isTransitionActive) {
+                            Modifier.sharedBounds(
+                                rememberSharedContentState(key = "race-name-${race.round}"),
+                                animatedVisibilityScope = animatedContentScope,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                                resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
+                            )
+                        } else Modifier
+                    )
+                }
 
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.3f),
-                            modifier = Modifier.padding(vertical = 8.dp)
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // 3. Circuit Name & Location
+                with(sharedTransitionScope) {
+                    Text(
+                        text = race.Circuit.circuitName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.sharedBounds(
+                            sharedTransitionScope.rememberSharedContentState(key = "circuit-name-${race.round}"),
+                            animatedVisibilityScope = animatedContentScope,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                            resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
                         )
+                    )
+                }
+                with(sharedTransitionScope) {
+                    Text(
+                        text = "${race.Circuit.Location.locality}, ${race.Circuit.Location.country}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.sharedBounds(
+                            sharedTransitionScope.rememberSharedContentState(key = "location-${race.round}"),
+                            animatedVisibilityScope = animatedContentScope,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                            resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
+                        )
+                    )
+                }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.weight(1f))
+
+                // --- BOTTOM SECTION ---
+
+                HorizontalDivider(
+                    color = Color.White.copy(alpha = 0.15f),
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+
+                if (showDate || isCurrentWeekend) {
+                    val (formattedDate, formattedTime) = remember(race.date, race.time) {
+                        try {
+                            val raceDate = LocalDate.parse(race.date)
+                            val raceTime = race.time?.let { LocalTime.parse(it.take(5)) } ?: LocalTime.MIDNIGHT
+                            val utcDateTime = LocalDateTime.of(raceDate, raceTime)
+                            val zonedUtcDateTime = utcDateTime.atZone(ZoneId.of("UTC"))
+                            val localZoneId = ZoneId.systemDefault()
+                            val localZonedDateTime = zonedUtcDateTime.withZoneSameInstant(localZoneId)
+                            val localDateFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
+                            val localTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+                            val dateStr = localZonedDateTime.format(localDateFormatter)
+                            val timeStr = localZonedDateTime.format(localTimeFormatter)
+                            Pair(dateStr, timeStr.takeIf { race.time != null })
+                        } catch (e: Exception) {
+                            val fallbackTime = race.time?.let { "${it.take(5)} UTC" }
+                            Pair(race.date, fallbackTime)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                painter = painterResource(R.drawable.calendar_today_24dp_e3e3e3_fill0_wght400_grad0_opsz24),
+                                contentDescription = "Race Date",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.White.copy(alpha = 0.9f)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = formattedDate,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = Color.White.copy(alpha = 0.9f)
+                            )
+
+                            formattedTime?.let { time ->
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text("•", color = Color.White.copy(alpha = 0.5f))
+                                Spacer(modifier = Modifier.width(12.dp))
+
                                 Icon(
-                                    painter = painterResource(R.drawable.calendar_today_24dp_e3e3e3_fill0_wght400_grad0_opsz24),
-                                    contentDescription = "Race Date",
-                                    modifier = Modifier.size(16.dp),
-                                    tint = Color.White.copy(alpha = 0.9f)
+                                    painter = painterResource(R.drawable.clock),
+                                    contentDescription = "Race Time",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.tertiary
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = formattedDate,
+                                    text = time,
                                     style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
                                     color = Color.White.copy(alpha = 0.9f)
                                 )
                             }
-                            formattedTime?.let { time ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.clock),
-                                        contentDescription = "Race Time",
-                                        modifier = Modifier.size(13.dp),
-                                        tint = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = time,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = 0.9f)
-                                    )
-                                }
-                            }
                         }
-                    } else if (isPast && results.isNotEmpty()) {
-                        val topThree = remember(results) { results.take(3) }
 
+                        // 4. CTA Button with Haze Effect
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .hazeEffect(
+                                    state = hazeState,
+                                    style = CupertinoMaterials.thin()
+                                ) {
+                                    blurRadius = 20.dp
+                                }
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.chevron_forward_24dp_000000_fill0_wght400_grad0_opsz24),
+                                contentDescription = "View Details",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                } else if (isPast && results.isNotEmpty()) {
+                    val topThree = remember(results) { results.take(3) }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         PodiumCard(
                             topThree = topThree,
-                            modifier = Modifier.padding(vertical = 8.dp)
+                            modifier = Modifier.weight(1f)
                         )
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // 5. CTA Button (Past Races) with Haze Effect
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .hazeEffect(
+                                    state = hazeState,
+                                    style = CupertinoMaterials.thin()
+                                ) {
+                                    blurRadius = 20.dp
+                                }
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.chevron_forward_24dp_000000_fill0_wght400_grad0_opsz24),
+                                contentDescription = "View Results",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
+
+// Replaced your original overlay with this stronger, more targeted gradient
+private val heavyScrimBrush = Brush.verticalGradient(
+    colors = listOf(
+        Color.Black.copy(alpha = 0.1f), // Light at top
+        Color.Black.copy(alpha = 0.5f), // Middle transition
+        Color.Black.copy(alpha = 0.95f) // Heavy at bottom for text
+    ),
+    startY = 0f,
+    endY = Float.POSITIVE_INFINITY
+)
 
 @Composable
 fun PodiumCard(
