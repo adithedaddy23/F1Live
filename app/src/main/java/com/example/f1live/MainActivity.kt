@@ -571,7 +571,7 @@ private fun CustomGlassmorphicBottomNav(
 ) {
     // Check if device is running Android 14 (API 34) or higher
     val isAndroid14OrAbove = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-
+    val selectedIconColorAnimation = remember { androidx.compose.animation.Animatable(Color(0xFF1565C0)) }
     // Adaptive luminance detection
     val layer = rememberGraphicsLayer()
     val luminanceAnimation = remember { Animatable(0.5f) }
@@ -601,6 +601,8 @@ private fun CustomGlassmorphicBottomNav(
                     tween(800)
                 )
             }
+
+
             luminanceAnimation.animateTo(
                 averageLuminance.toFloat(),
                 tween(400)
@@ -645,7 +647,7 @@ private fun CustomGlassmorphicBottomNav(
                                 blur(
                                     if (l > 0f) lerp(3f.dp.toPx(), 2.5f.dp.toPx(), l)
                                     else lerp(3f.dp.toPx(), 2.5f.dp.toPx(), -l),
-                                    edgeTreatment = TileMode.Decal
+                                    edgeTreatment = TileMode.Clamp
                                 )
 
                                 lens(

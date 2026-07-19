@@ -433,7 +433,7 @@ fun RaceCard(
     val cardShape = MaterialTheme.shapes.medium
 
     val containerColor = remember(isCurrentWeekend) {
-        if (isCurrentWeekend) Color(0xFF2196F3).copy(alpha = 0.1f) else Color.Transparent
+        if (isCurrentWeekend) Color(0xFF2196F3) else Color.Transparent
     }
 
     val isTransitionActive = animatedContentScope.transition.isRunning

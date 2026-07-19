@@ -9,6 +9,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -445,17 +447,38 @@ fun DriverStandingCard(
 
                     with(sharedTransitionScope) {
                         Text(
-                            text = "${standing.Driver.givenName ?: ""} ${(standing.Driver.familyName ?: "").let { if (it.isNotBlank()) it.uppercase() else "" }}".trim(),
+                            text = standing.Driver.givenName ?: "Unknown",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.sharedElement(
-                                sharedTransitionScope.rememberSharedContentState(key = "race-name-${standing.Driver.familyName}"),
-                                animatedVisibilityScope = animatedContentScope
+                            modifier = Modifier.sharedBounds(
+                                sharedTransitionScope.rememberSharedContentState(key = "race-name-${standing.Driver.givenName}"),
+                                animatedVisibilityScope = animatedContentScope,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                                resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
                             )
                         )
+                        Spacer(Modifier.width(4.dp))
+                        with(sharedTransitionScope) {
+                            Text(
+                                text = (standing.Driver.familyName ?: "").uppercase(),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.sharedBounds(
+                                    sharedTransitionScope.rememberSharedContentState(key = "race-name-${standing.Driver.familyName}"),
+                                    animatedVisibilityScope = animatedContentScope,
+                                    enter = fadeIn(),
+                                    exit = fadeOut(),
+                                    resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds()
+                                )
+                            )
+                        }
                     }
                 }
 
